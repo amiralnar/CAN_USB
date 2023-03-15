@@ -9,10 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-#include "eeprom.h"
 #include "main.h"
-#include "ff_gen_drv.h"
-
 
 // command buffer
 uint8_t cmd_buf[CMD_BUFFER_LENGTH];
@@ -33,14 +30,6 @@ extern UART_HandleTypeDef huart3;
 extern UART_HandleTypeDef *huart_active;
 extern UART_HandleTypeDef *huart_lin;
 extern uint8_t flash_buffer[128];
-
-extern FRESULT fresult;
-extern FATFS fs;
-extern FIL fil;
-extern uint8_t filename[];
-extern uint8_t pathname[];
-
-extern Disk_drvTypeDef  disk;
 
 uint32_t CAN_mailbox;
 HAL_StatusTypeDef CAN_status;
@@ -109,83 +98,6 @@ HAL_StatusTypeDef CAN_Log_Buffer_pull(void)
 	{
 		return HAL_BUSY;
 	}
-}
-
-void Generate_Next_FileName(uint8_t * name, uint8_t * path)
-{
-	static uint32_t num_file = 0;
-	uint32_t pie;
-	uint8_t piece;
-	uint32_t pow10 = 10000000;
-	num_file++;
-
-	name[0] = '/';
-	name[1] = path[0];
-	name[2] = path[1];
-	name[3] = path[2];
-	name[4] = path[3];
-	name[5] = path[4];
-	name[6] = path[5];
-	name[7] = path[6];
-	name[8] = path[7];
-	name[9] = '/';
-
-	if(num_file > 99999999) num_file = 0;
-	pie = num_file;
-	for(int i = 0; i < 7; i++)
-	{
-		piece = pie / pow10;
-		pie -= piece * pow10;
-		name[i + LOG_NAME_SHIFT] = piece + '0';
-		pow10 /= 10;
-	}
-	name[7 + LOG_NAME_SHIFT] = pie +'0';
-	name[8 + LOG_NAME_SHIFT] = '.';
-	if(conf.fileOutputType == BINARYFILE)
-	{
-		name[9 + LOG_NAME_SHIFT] = 'L';
-		name[10 + LOG_NAME_SHIFT] = 'O';
-		name[11 + LOG_NAME_SHIFT] = 'G';
-	}
-	else if(conf.fileOutputType == GVRET_FILE)
-	{
-		name[9 + LOG_NAME_SHIFT] = 'C';
-		name[10 + LOG_NAME_SHIFT] = 'S';
-		name[11 + LOG_NAME_SHIFT] = 'V';
-	}
-	else if(conf.fileOutputType == CRTD_FILE)
-	{
-		name[9 + LOG_NAME_SHIFT] = 'C';
-		name[10 + LOG_NAME_SHIFT] = 'R';
-		name[11 + LOG_NAME_SHIFT] = 'T';
-	}
-	else
-	{
-		name[9 + LOG_NAME_SHIFT] = 'T';
-		name[10 + LOG_NAME_SHIFT] = 'X';
-		name[11 + LOG_NAME_SHIFT] = 'T';
-	}
-	name[12 + LOG_NAME_SHIFT] = 0;
-}
-
-void Generate_Next_Path(uint8_t * name)
-{
-	static uint32_t num_path = 0;
-	uint32_t pie;
-	uint8_t piece;
-	uint32_t pow10 = 10000;
-	num_path++;
-	if(num_path > 99999) num_path = 0;
-	pie = num_path;
-	for(int i = 0; i < 4; i++)
-	{
-		piece = pie / pow10;
-		pie -= piece * pow10;
-		name[i + LOG_PATH_SHIFT] = piece + '0';
-		pow10 /= 10;
-	}
-	name[4 + LOG_PATH_SHIFT] = pie +'0';
-	name[5 + LOG_PATH_SHIFT] = 0;
 }
 
 void CAN_Buffer_clean(void)
@@ -514,93 +426,6 @@ uint16_t BuildFrameToUSB (can_msg_t frame, int whichBus, uint8_t * buf)
     return pointer;
 }
 
-
-uint16_t BuildFrameToFile(can_msg_t frame, uint8_t * buff)
-{
-   // uint8_t buff[40];
-    //uint8_t temp;
-    unsigned int id_temp;
-    uint32_t pointer = 0;
-    if (conf.fileOutputType == BINARYFILE) {
-    	if (frame.header.IDE == CAN_ID_EXT) id_temp = frame.header.ExtId | 1 << 31;
-    	else id_temp = frame.header.StdId;
-        buff[pointer++] = (uint8_t)(frame.timestamp & 0xFF);
-        buff[pointer++] = (uint8_t)(frame.timestamp >> 8);
-        buff[pointer++] = (uint8_t)(frame.timestamp >> 16);
-        buff[pointer++] = (uint8_t)(frame.timestamp >> 24);
-        buff[pointer++] = (uint8_t)(id_temp & 0xFF);
-        buff[pointer++] = (uint8_t)(id_temp >> 8);
-        buff[pointer++] = (uint8_t)(id_temp >> 16);
-        buff[pointer++] = (uint8_t)(id_temp >> 24);
-        buff[pointer++] = frame.header.DLC + (uint8_t)(frame.bus << 4);
-        for (int c = 0; c < frame.header.DLC; c++) {
-            buff[pointer++] = frame.data_byte[c];
-        }
-        //Logger::fileRaw(buff, 9 + frame.length);
-
-
-    } else if (conf.fileOutputType == GVRET_FILE) {
-    	if (frame.header.IDE == CAN_ID_EXT) id_temp = frame.header.ExtId;
-    	else id_temp = frame.header.StdId;
-        sprintf((char *)buff, "%i,%x,%i,%i,%i", (int)frame.timestamp, id_temp, (int)frame.header.IDE, (int)frame.bus, (int)frame.header.DLC);
-        //Logger::fileRaw(buff, strlen((char *)buff));
-        pointer = strlen((char *)buff);
-
-        if(frame.header.RTR == CAN_RTR_DATA)
-    	{
-    		for(int i = 0; i < frame.header.DLC; i++)
-    		{
-    			buff[pointer++] = ',';
-    			ShortToHex(frame.data_byte[i], &buff[pointer]);
-    			pointer +=2;
-    		}
-    	}
-
-//        for (int c = 0; c < frame.header.DLC; c++) {
-//            sprintf((char *) buff, ",%x", frame.data_byte[c]);
-//            //Logger::fileRaw(buff, strlen((char *)buff));
-//            //TODO
-//        }
-        buff[pointer++] = '\r';
-        buff[pointer++] = '\n';
-        //Logger::fileRaw(buff, 2);
-
-
-    } else if (conf.fileOutputType == CRTD_FILE) {
-        int idBits = 11;
-        if (frame.header.IDE == CAN_ID_EXT)
-        {
-        	idBits = 29;
-        	id_temp = frame.header.ExtId;
-        }
-        else id_temp = frame.header.StdId;
-        sprintf((char *)buff, "%i.%u %c%i %x", (int)(frame.timestamp / 1000), (int)(frame.timestamp % 1000), (frame.can_dir == DIR_TRANSMIT)?'T':'R', idBits, id_temp);
-
-        pointer = strlen((char *)buff);
-
-        if(frame.header.RTR == CAN_RTR_DATA)
-    	{
-    		for(int i = 0; i < frame.header.DLC; i++)
-    		{
-    			buff[pointer++] = ' ';
-    			ShortToHex(frame.data_byte[i], &buff[pointer]);
-    			pointer +=2;
-    		}
-    	}
-        //Logger::fileRaw(buff, strlen((char *)buff));
-
-//        for (int c = 0; c < frame.header.DLC; c++) {
-//            sprintf((char *) buff, " %x", frame.data_byte[c]);
-//            //Logger::fileRaw(buff, strlen((char *)buff));
-//        }
-        buff[pointer++] = '\r';
-        buff[pointer++] = '\n';
-        //Logger::fileRaw(buff, 2);
-    }
-    return pointer;
-}
-
-
 void setPromiscuousMode()
 {
     //By default there are 7 mailboxes for each device that are RX boxes
@@ -670,62 +495,10 @@ HAL_StatusTypeDef SetFilterCAN(uint32_t id, uint32_t mask_or_id, uint32_t mode, 
 	 return HAL_OK;
 }
 
-HAL_StatusTypeDef save_script(uint8_t * cmd_buf, uint8_t cmd_len)
-{
-	if(conf.script_address < eeprom_settings.start_address_script || conf.script_address > eeprom_settings.eeprom_size-2)
-	{
-		conf.script_address = eeprom_settings.start_address_script;
-	}
-	if(conf.script_address + cmd_len < eeprom_settings.eeprom_size-2)
-	{
-    	cmd_buf[cmd_len] = CR;
-    	if(EEPROM_Write(&hspi2, conf.script_address, cmd_buf, cmd_len+1) == HAL_OK)
-    	{
-    		conf.script_address += cmd_len+1;
-    		return HAL_OK;
-    	}
-    	else
-    		return HAL_ERROR;
-	}
-	else
-		return HAL_ERROR;
-
-}
-
-HAL_StatusTypeDef copy_script(uint8_t * buf, uint32_t size)
-{
-	uint8_t temp;
-	static uint32_t shift = 0;
-	if(size > eeprom_settings.eeprom_size + shift - eeprom_settings.start_address_script - 2)
-		return ERROR;
-
-	for(uint32_t i = 0; i < size; i++)
-	{
-		EEPROM_Read(&hspi2, eeprom_settings.start_address_script + i, &temp, 1);
-		if(temp != buf[i])
-		{
-			if(EEPROM_Write(&hspi2, eeprom_settings.start_address_script + shift, buf, size) == HAL_OK)
-			{
-				shift += size;
-				return HAL_OK;
-			}
-			else
-				return HAL_ERROR;
-		}
-	}
-	return HAL_BUSY;
-}
-
-
 uint8_t exec_usb_cmd (uint8_t * cmd_buf)
 {
 	uint32_t filter_temp;
     uint8_t cmd_len = strlen ((char *)cmd_buf);	// get command length
-
-    if(conf.scpipt_saving == true && cmd_buf[0] != PROGRAM_SCRIPT)
-    {
-    	save_script(cmd_buf, cmd_len);
-    }
 
     switch (cmd_buf[0]) {
             // get serial number
@@ -996,7 +769,6 @@ uint8_t exec_usb_cmd (uint8_t * cmd_buf)
         	CAN_TxHeader.IDE = CAN_ID_STD;
         	CAN_TxHeader.RTR = CAN_RTR_REMOTE;
         	CAN_TxHeader.DLC = HexTo4bits(cmd_buf[4]);
-        	HAL_GPIO_WritePin(TX_LED_GPIO_Port, TX_LED_Pin, GPIO_PIN_SET);
         	CAN_status = HAL_CAN_AddTxMessage(&hcan, &CAN_TxHeader, can_tx_msg.data_byte, &CAN_mailbox);
         	if(CAN_status != HAL_OK)
         	{
@@ -1055,7 +827,6 @@ uint8_t exec_usb_cmd (uint8_t * cmd_buf)
         	{
         		can_tx_msg.data_byte[i] = HexToShort(cmd_buf[i*2+5], cmd_buf[i*2+6]);
         	}
-        	HAL_GPIO_WritePin(TX_LED_GPIO_Port, TX_LED_Pin, GPIO_PIN_SET);
         	if(eeprom_settings.numBus != BUS_LIN)
         	{
             	CAN_status = HAL_CAN_AddTxMessage(&hcan, &CAN_TxHeader, can_tx_msg.data_byte, &CAN_mailbox);
@@ -1111,7 +882,6 @@ uint8_t exec_usb_cmd (uint8_t * cmd_buf)
         	CAN_TxHeader.IDE = CAN_ID_EXT;
         	CAN_TxHeader.RTR = CAN_RTR_REMOTE;
         	CAN_TxHeader.DLC = HexTo4bits(cmd_buf[9]);
-        	HAL_GPIO_WritePin(TX_LED_GPIO_Port, TX_LED_Pin, GPIO_PIN_SET);
         	CAN_status = HAL_CAN_AddTxMessage(&hcan, &CAN_TxHeader, can_tx_msg.data_byte, &CAN_mailbox);
         	if(CAN_status != HAL_OK)
         	{
@@ -1169,7 +939,6 @@ uint8_t exec_usb_cmd (uint8_t * cmd_buf)
         	{
         		can_tx_msg.data_byte[i] = HexToShort(cmd_buf[i*2+10], cmd_buf[i*2+11]);
         	}
-        	HAL_GPIO_WritePin(TX_LED_GPIO_Port, TX_LED_Pin, GPIO_PIN_SET);
         	CAN_status = HAL_CAN_AddTxMessage(&hcan, &CAN_TxHeader, can_tx_msg.data_byte, &CAN_mailbox);
         	if(CAN_status != HAL_OK)
         		return ERROR;
@@ -1229,7 +998,6 @@ uint8_t exec_usb_cmd (uint8_t * cmd_buf)
         	{
         		return ERROR;
         	}
-        	EEPROM_Write(&hspi2, EEPROM_SETINGS_ADDR + ((uint32_t)&eeprom_settings.UART_Speed - (uint32_t)&eeprom_settings), (uint8_t*)&eeprom_settings.UART_Speed, sizeof(eeprom_settings.UART_Speed));
         	return CR; // set predefined speed
 
         case SET_USART_BTR_CUST:
@@ -1248,7 +1016,6 @@ uint8_t exec_usb_cmd (uint8_t * cmd_buf)
         	{
         		return ERROR;
         	}
-        	EEPROM_Write(&hspi2, EEPROM_SETINGS_ADDR + ((uint32_t)&eeprom_settings.UART_Speed - (uint32_t)&eeprom_settings), (uint8_t*)&eeprom_settings.UART_Speed, sizeof(eeprom_settings.UART_Speed));
         	return CR; // set custom speed
 
         	// Select Channel
@@ -1261,26 +1028,9 @@ uint8_t exec_usb_cmd (uint8_t * cmd_buf)
 
 
         case PROGRAM_SCRIPT:
-            if(cmd_buf[1] == '1')
-            {
-            	conf.scpipt_saving = true;
-            	conf.state = IDLE_ST;
-            	conf.script_address = eeprom_settings.start_address_script;
-            }
-            else if(cmd_buf[1] == '0')
-            {
-            	uint8_t terminator = 0xFF;
-            	conf.scpipt_saving = false;
-            	EEPROM_Write(&hspi2, conf.script_address, &terminator, 1);
-            }
-            else if(cmd_buf[1] == '2')
-            {
-            	conf.script_print = true;
-            }
-        	return CR;
+            return CR;
 
         case JUMP_MARKER:
-        	if(conf.script_run)	conf.script_loop_address = conf.script_address;
         	return CR;
 
         case DELAY_MS:
@@ -1309,54 +1059,6 @@ uint8_t exec_usb_cmd (uint8_t * cmd_buf)
         	return CR;
 
         case START_LOGGING:
-        	if(cmd_len == 2)
-        	{
-        		if(cmd_buf[1] >= '0' && cmd_buf[1] <='3')
-        		{
-        			eeprom_settings.fileOutputType = cmd_buf[1] - '0';
-        			EEPROM_Write(&hspi2, EEPROM_SETINGS_ADDR + ((uint32_t)&eeprom_settings.fileOutputType - (uint32_t)&eeprom_settings), (uint8_t*)&eeprom_settings.fileOutputType, sizeof(eeprom_settings.fileOutputType));
-        		}
-        		else return ERROR;
-        	}
-
-
-        	if(conf.sd_card_avalible == false)
-        	{
-        		fresult = f_mount(&fs, "0:", 1);
-        		if(fresult == FR_OK) conf.sd_card_avalible = true;
-        		else
-        		{
-        			f_mount(0, "0:", 1);
-        			disk.is_initialized[0] = 0; // Reset flag of initialized
-        			return ERROR;
-        		}
-        	}
-
-        	if(conf.loger_run == true) return CR;
-
-        	conf.fileOutputType = eeprom_settings.fileOutputType;
-
-        	do // TODO EMPTY FOLDER delete/reuse
-        	{
-        		Generate_Next_Path(pathname);
-        		fresult = f_mkdir((TCHAR*)pathname);
-        	}
-        	while(fresult == FR_EXIST);
-
-        	if(fresult != FR_OK) return ERROR;
-
-        	do
-        	{
-        		Generate_Next_FileName(filename, pathname);
-        		fresult = f_open(&fil, (TCHAR*)filename, FA_WRITE | FA_CREATE_NEW | FA_CREATE_ALWAYS);
-        	}
-        	while(fresult == FR_EXIST);
-        	if(fresult == FR_OK)
-        	{
-        		conf.fileOutputType = eeprom_settings.fileOutputType;
-        		conf.loger_run = true;
-        	}
-        	else return ERROR;
         	return CR;
 
         case LIN_MODE:
@@ -1372,12 +1074,6 @@ uint8_t exec_usb_cmd (uint8_t * cmd_buf)
         	if(cmd_buf[1] == 'R' && cmd_buf[2] == 'S' && cmd_buf[3] == 'T')
         	{
         		NVIC_SystemReset();
-        	}
-        	if(cmd_buf[1] == 'S' && cmd_buf[2] == 'D')
-        	{
-        		if(cmd_buf[3] == '1') eeprom_settings.SD_autoconnect = 1;
-        		if(cmd_buf[3] == '0') eeprom_settings.SD_autoconnect = 0;
-        		EEPROM_Write(&hspi2, EEPROM_SETINGS_ADDR + ((uint32_t)&eeprom_settings.SD_autoconnect - (uint32_t)&eeprom_settings), (uint8_t*)&eeprom_settings.SD_autoconnect, sizeof(eeprom_settings.SD_autoconnect));
         	}
         	return CR;
 
@@ -1647,8 +1343,7 @@ void Check_Command(uint8_t in_byte)
                     }
                 }*/
                 //}
-                HAL_GPIO_WritePin(TX_LED_GPIO_Port, TX_LED_Pin, GPIO_PIN_SET);
-                CAN_TxHeader.RTR = CAN_RTR_DATA;
+               CAN_TxHeader.RTR = CAN_RTR_DATA;
                 if(HAL_CAN_AddTxMessage(&hcan, &CAN_TxHeader, can_tx_msg.data_byte, &CAN_mailbox) == HAL_OK && (conf.loger_run == true))
                 {
                 	can_tx_msg.timestamp = HAL_GetTick();
@@ -1775,9 +1470,6 @@ void Check_Command(uint8_t in_byte)
                 conf.CAN_Enable[1] = false;
             }
             state = IDLE;
-            //now, write out the new canbus settings to EEPROM
-            EEPROM_Write(&hspi2, EEPROM_SETINGS_ADDR + ((uint32_t)&eeprom_settings.CAN_Speed[0] - (uint32_t)&eeprom_settings),
-            		(uint8_t*)&eeprom_settings.CAN_Speed[0], sizeof(eeprom_settings.CAN_Speed[0])*2);
             setPromiscuousMode();
             break;
         }
@@ -1998,7 +1690,6 @@ can_msg_t Parse_LIN_msg(uint8_t * in_buf, uint8_t bytes)
 
 HAL_StatusTypeDef Open_LIN_cannel()
 {
-	HAL_GPIO_WritePin(LIN_EN_GPIO_Port, LIN_EN_Pin, GPIO_PIN_SET);
 	huart1.Init.BaudRate = eeprom_settings.CAN_Speed[eeprom_settings.numBus];
 
 	huart1.Init.Mode = UART_MODE_TX_RX;
@@ -2010,12 +1701,6 @@ HAL_StatusTypeDef Open_LIN_cannel()
 		  __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
 		  __HAL_UART_ENABLE_IT(&huart1, UART_IT_RXNE);
 
-			EEPROM_Write(&hspi2,
-					EEPROM_SETINGS_ADDR + ((uint32_t)&eeprom_settings.CAN_Speed[eeprom_settings.numBus] - (uint32_t)&eeprom_settings),
-					(uint8_t*)&eeprom_settings.CAN_Speed[eeprom_settings.numBus], sizeof(eeprom_settings.CAN_Speed[eeprom_settings.numBus]));
-			EEPROM_Write(&hspi2,
-					EEPROM_SETINGS_ADDR + ((uint32_t)&eeprom_settings.CAN_mode[eeprom_settings.numBus] - (uint32_t)&eeprom_settings),
-					(uint8_t*)&eeprom_settings.CAN_mode[eeprom_settings.numBus], sizeof(eeprom_settings.CAN_mode[eeprom_settings.numBus]));
 		return HAL_OK;
 	}
 	return HAL_ERROR;
@@ -2023,7 +1708,6 @@ HAL_StatusTypeDef Open_LIN_cannel()
 
 HAL_StatusTypeDef Close_LIN_cannel(void)
 {
-	HAL_GPIO_WritePin(LIN_EN_GPIO_Port, LIN_EN_Pin, GPIO_PIN_RESET);
 	HAL_UART_DeInit(&huart1);
 	  __HAL_UART_DISABLE_IT(&huart1, UART_IT_RXNE);
 	  __HAL_UART_DISABLE_IT(&huart1, UART_IT_LBD);
@@ -2047,14 +1731,6 @@ HAL_StatusTypeDef Open_CAN_cannel()
 	Change_CAN_channel();
 	if(CAN_Init_Custom(eeprom_settings.CAN_Speed[eeprom_settings.numBus], eeprom_settings.CAN_mode[eeprom_settings.numBus]) == HAL_OK)//);CAN_MODE_LOOPBACK
 	{
-		// TODO write eeprom only if changed speed
-		EEPROM_Write(&hspi2,
-				EEPROM_SETINGS_ADDR + ((uint32_t)&eeprom_settings.CAN_Speed[eeprom_settings.numBus] - (uint32_t)&eeprom_settings),
-				(uint8_t*)&eeprom_settings.CAN_Speed[eeprom_settings.numBus], sizeof(eeprom_settings.CAN_Speed[eeprom_settings.numBus]));
-		EEPROM_Write(&hspi2,
-				EEPROM_SETINGS_ADDR + ((uint32_t)&eeprom_settings.CAN_mode[eeprom_settings.numBus] - (uint32_t)&eeprom_settings),
-				(uint8_t*)&eeprom_settings.CAN_mode[eeprom_settings.numBus], sizeof(eeprom_settings.CAN_mode[eeprom_settings.numBus]));
-
 		  //if(SetFilterCAN(0, 0, 0, 0) != HAL_OK) return HAL_ERROR;
 		  if(HAL_CAN_Start(&hcan) != HAL_OK) return HAL_ERROR;
 		  if(HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING |
@@ -2075,7 +1751,6 @@ HAL_StatusTypeDef Close_CAN_cannel(void)
 {
 	if(HAL_CAN_DeInit(&hcan) == HAL_OK)
 	{
-		HAL_GPIO_WritePin(ERROR_LED_GPIO_Port, ERROR_LED_Pin, GPIO_PIN_RESET);
 		return HAL_OK;
 	}
 
@@ -2086,10 +1761,6 @@ void Change_CAN_channel(void)
 {
 	Close_CAN_cannel();
 	Close_LIN_cannel();
-	HAL_GPIO_WritePin(HS_CAN_EN_GPIO_Port, HS_CAN_EN_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(FT_CAN_EN_GPIO_Port, FT_CAN_EN_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(SW_CAN_EN_GPIO_Port, SW_CAN_EN_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(LIN_EN_GPIO_Port, LIN_EN_Pin, GPIO_PIN_RESET);
 
 	//SysSettings.numBus++;
 	//if(SysSettings.numBus > 4) SysSettings.numBus = 0;
@@ -2099,15 +1770,8 @@ void Change_CAN_channel(void)
 	switch(eeprom_settings.numBus)
 	{
 	default: break;
-	case 0: HAL_GPIO_WritePin(HS_CAN_EN_GPIO_Port, HS_CAN_EN_Pin, GPIO_PIN_SET); break;
-	case 1: HAL_GPIO_WritePin(FT_CAN_EN_GPIO_Port, FT_CAN_EN_Pin, GPIO_PIN_SET); break;
-	case 2: HAL_GPIO_WritePin(SW_CAN_EN_GPIO_Port, SW_CAN_EN_Pin, GPIO_PIN_SET); break;
-	case 3: HAL_GPIO_WritePin(LIN_EN_GPIO_Port, LIN_EN_Pin, GPIO_PIN_SET); break;
 	}
 
-	EEPROM_Write(&hspi2,
-			EEPROM_SETINGS_ADDR + ((uint32_t)&eeprom_settings.numBus - (uint32_t)&eeprom_settings),
-			(uint8_t*)&eeprom_settings.numBus, sizeof(eeprom_settings.numBus));
 }
 
 void Next_CAN_channel (void)
@@ -2120,15 +1784,12 @@ void Next_CAN_channel (void)
 
 void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef *hcan)
 {
-	//HAL_GPIO_WritePin(TX_LED_GPIO_Port, TX_LED_Pin, GPIO_PIN_RESET);
 }
 void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef *hcan)
 {
-	//HAL_GPIO_WritePin(TX_LED_GPIO_Port, TX_LED_Pin, GPIO_PIN_RESET);
 }
 void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef *hcan)
 {
-	//HAL_GPIO_WritePin(TX_LED_GPIO_Port, TX_LED_Pin, GPIO_PIN_RESET);
 }
 
 

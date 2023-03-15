@@ -174,8 +174,6 @@ volatile typedef struct {
 
     uint32_t UART_Speed;
     uint32_t reserv4;
-    FILEOUTPUTTYPE fileOutputType; //what format should we use for file output?
-    uint8_t SD_autoconnect;
 } t_eeprom_settings;
 
 typedef struct {  //should be 10 bytes

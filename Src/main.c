@@ -21,9 +21,7 @@
 #include "main.h"
 #include "can.h"
 #include "dma.h"
-#include "fatfs.h"
 #include "rtc.h"
-#include "spi.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -33,7 +31,6 @@
 #include <stdlib.h>
 #include "button.h"
 #include "GVRET.h"
-#include "eeprom.h"
 #include <string.h>
 #include "LIN.h"
 /* USER CODE END Includes */
@@ -75,8 +72,6 @@ uint32_t uart_rx_pointer_w = 0;
 uint32_t uart_rx_pointer_r = 0;
 uint8_t uart_rx_char;
 uint8_t flash_buffer[128];
-uint8_t filename[] = LOG_NAME;
-uint8_t pathname[] = LOG_PATH;
 
 uint8_t script_read_buf[1024];
 uint32_t debug_pt = 0;
@@ -103,11 +98,6 @@ uint8_t script_buf[CMD_BUFFER_LENGTH];
 uint8_t script_buf_pointer = 0;
 
 extern const char help_text[];
-
-FRESULT fresult = FR_OK;
-FATFS fs;
-FIL fil;
-extern Disk_drvTypeDef  disk;
 
 /* USER CODE END PV */
 
@@ -154,27 +144,6 @@ void UART_Check_Data_Ready(void)
 			//CAN_Buffer_clean();
 		}
 
-		if(conf.script_print)
-		{
-			uart_tx_pointer = 0;
-			for(conf.script_address = eeprom_settings.start_address_script; conf.script_address < eeprom_settings.eeprom_size-2/*(eeprom_settings.start_address_csript + 128)*/; conf.script_address++)
-			{
-				EEPROM_Read(&hspi2, conf.script_address, &uart_tx_bufer[uart_tx_pointer++], 1);
-				if(uart_tx_bufer[uart_tx_pointer-1] == 0xFF)
-				{
-					uart_tx_pointer--;
-					conf.script_print = false;
-					break;
-				}
-			}
-			if(conf.script_address >= eeprom_settings.eeprom_size-2)
-			{
-				conf.script_print = false;
-			}
-			HAL_UART_Transmit_DMA(huart_active, uart_tx_bufer, uart_tx_pointer);
-			uart_tx_pointer = 0;
-			uart_busy = 1;
-		}
 		if(conf.help_print)
 				{
 					uart_tx_pointer = 0;
@@ -212,7 +181,6 @@ void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	CAN_Buffer_Write_Data(can_rx_buf[1]);
 	if(conf.loger_run == true)
 		CAN_Log_Buffer_Write_Data(can_rx_buf[1]);
-	HAL_GPIO_WritePin(RX_LED_GPIO_Port, RX_LED_Pin, GPIO_PIN_SET);
 }
 
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
@@ -223,7 +191,6 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 	CAN_Buffer_Write_Data(can_rx_buf[0]);
 	if(conf.loger_run == true)
 		CAN_Log_Buffer_Write_Data(can_rx_buf[0]);
-	HAL_GPIO_WritePin(RX_LED_GPIO_Port, RX_LED_Pin, GPIO_PIN_SET);
 }
 
 void HAL_CAN_RxFifo0FullCallback(CAN_HandleTypeDef *hcan)
@@ -238,16 +205,12 @@ void HAL_CAN_RxFifo1FullCallback(CAN_HandleTypeDef *hcan)
 
 void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan)
 {
-	HAL_GPIO_WritePin(ERROR_LED_GPIO_Port, ERROR_LED_Pin, GPIO_PIN_SET);
 	return;
 }
 
 HAL_StatusTypeDef Save_to_File(uint8_t * buf, uint32_t len)
 {
-	unsigned int bw;
-	fresult = f_write(&fil, buf, len, &bw);
-	if(fresult == FR_OK && bw == len) return HAL_OK;
-	else return HAL_ERROR;
+	return HAL_OK;
 }
 
 
@@ -288,41 +251,27 @@ int main(void)
   MX_USART2_UART_Init();
   MX_USART1_UART_Init();
   MX_CAN_Init();
-  MX_SPI2_Init();
-  MX_FATFS_Init();
-  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   HAL_Delay(100);
 
 
-  EEPROM_Write_disable(&hspi2, 1000);
-
-
- // first initialization
-  volatile boolean first = false;
-  EEPROM_Read(&hspi2, EEPROM_SETINGS_ADDR, (uint8_t*)&eeprom_settings, sizeof(eeprom_settings));
-  if(eeprom_settings.version == 0xFFFF || eeprom_settings.version < EEPROM_VERSION) {eeprom_settings.version = EEPROM_VERSION; first = true;}
-  if(eeprom_settings.eeprom_size == 0xFFFF) {eeprom_settings.eeprom_size = EEPROM_SIZE; first = true;}
-  if(eeprom_settings.number_of_busses == 0xFF) {eeprom_settings.number_of_busses = 4; first = true;}
-  if(eeprom_settings.start_address_script == 0xFFFF) {eeprom_settings.start_address_script = EEPROM_SCRIPT_ADDR; first = true;}
-  if(eeprom_settings.numBus == 0xFF) {eeprom_settings.numBus = 0; first = true;}
-  if(eeprom_settings.CAN_Speed[0] == 0xFFFFFFFF) {eeprom_settings.CAN_Speed[0] = 500000; first = true;}
-  if(eeprom_settings.CAN_Speed[1] == 0xFFFFFFFF) {eeprom_settings.CAN_Speed[1] = 125000; first = true;}
-  if(eeprom_settings.CAN_Speed[2] == 0xFFFFFFFF) {eeprom_settings.CAN_Speed[2] = 33333; first = true;}
-  if(eeprom_settings.CAN_Speed[3] == 0xFFFFFFFF) {eeprom_settings.CAN_Speed[3] = 10417; first = true;}
+  // first initialization
+  if(eeprom_settings.version == 0xFFFF || eeprom_settings.version < EEPROM_VERSION) {eeprom_settings.version = EEPROM_VERSION;}
+  if(eeprom_settings.eeprom_size == 0xFFFF) {eeprom_settings.eeprom_size = EEPROM_SIZE;}
+  if(eeprom_settings.number_of_busses == 0xFF) {eeprom_settings.number_of_busses = 4;}
+  if(eeprom_settings.start_address_script == 0xFFFF) {eeprom_settings.start_address_script = EEPROM_SCRIPT_ADDR;}
+  if(eeprom_settings.numBus == 0xFF) {eeprom_settings.numBus = 0;}
+  if(eeprom_settings.CAN_Speed[0] == 0xFFFFFFFF) {eeprom_settings.CAN_Speed[0] = 500000;}
+  if(eeprom_settings.CAN_Speed[1] == 0xFFFFFFFF) {eeprom_settings.CAN_Speed[1] = 125000;}
+  if(eeprom_settings.CAN_Speed[2] == 0xFFFFFFFF) {eeprom_settings.CAN_Speed[2] = 33333;}
+  if(eeprom_settings.CAN_Speed[3] == 0xFFFFFFFF) {eeprom_settings.CAN_Speed[3] = 10417;}
   for(int i=0; i<4;i++)
   {
-	  if(eeprom_settings.CAN_mode[i] == 0xFFFFFFFF) {eeprom_settings.CAN_mode[i] = CAN_MODE_SILENT; first = true;}
+	  if(eeprom_settings.CAN_mode[i] == 0xFFFFFFFF) {eeprom_settings.CAN_mode[i] = CAN_MODE_SILENT;}
   }
-  if(eeprom_settings.UART_Speed == 0xFFFF) {eeprom_settings.UART_Speed = 115200; first = true;}
-  if(eeprom_settings.fileOutputType > 10) {eeprom_settings.fileOutputType = CRTD_FILE; first = true;}
-  if(eeprom_settings.SD_autoconnect > 10) {eeprom_settings.SD_autoconnect = 0; first = true;}
+  if(eeprom_settings.UART_Speed == 0xFFFF) {eeprom_settings.UART_Speed = 115200;}
 
-  if(first == true) EEPROM_Write(&hspi2, EEPROM_SETINGS_ADDR, (uint8_t*)&eeprom_settings, sizeof(eeprom_settings));
-
-
-
-  // Check switch or incorrect data to reset UART speed
+    // Check switch or incorrect data to reset UART speed
   if(HAL_GPIO_ReadPin(BOOT1_GPIO_Port, BOOT1_Pin) == 1)
   {
 	  huart3.Init.BaudRate = 115200;
@@ -333,74 +282,11 @@ int main(void)
   }
   HAL_UART_Init(&huart3);
 
-// SD FLASH try connect
-  if(eeprom_settings.SD_autoconnect == 1)
-  {
-		fresult = f_mount(&fs, "0:", 1);
-		if(fresult == FR_OK)
-		{
-			conf.sd_card_avalible = true;
-			fresult = f_open(&fil, "script.txt", FA_READ);
-			if(fresult == FR_OK)
-			{
-				do
-				{
-					if(f_gets((char*)script_read_buf, sizeof(script_read_buf), &fil) != 0)
-					{
-						uint8_t str_len = strlen((char*)script_read_buf);
-
-						// cut of comments
-						for(int i = 0; i < str_len; i++)
-						{
-							if(script_read_buf[i] == ' ' || script_read_buf[i] == '#' || script_read_buf[i] == '\r')
-							{
-								//if(i == 0) continue;
-								script_read_buf[i] = '\r';
-								str_len = i + 1;
-								break;
-							}
-						}
-						// correct "end of command"
-						if(script_read_buf[str_len-1] == '\n') script_read_buf[str_len-1] = '\r';
-						else if(script_read_buf[str_len-1] != '\r') script_read_buf[str_len++] = '\r';
-						//if(debug_buf[str_len-2] == '\r') str_len--;
-
-						if(str_len > 1)
-							copy_script(script_read_buf, str_len);
-					}
-					else
-					{
-						script_read_buf[0] = 0xFF;
-						copy_script(script_read_buf, 1);
-						break;
-					}
-				}
-				while(1);
-			}
-		}
-		else
-		{
-			f_mount(0, "0:", 1);
-			disk.is_initialized[0] = 0; // Reset flag of initialized
-		}
-  }
-
-
   conf.script_run = true;
   conf.scpipt_saving = false;
   conf.script_address = eeprom_settings.start_address_script;
   conf.script_loop_address = 0xFFFF;
 
-
-#ifdef ONLY_GM_DIAG
-
-  SetFilterCAN(0x7E0<<21, 0xFF0<<21, CAN_FILTERMODE_IDMASK,0);
-  SetFilterCAN(0x7DF<<21, 0xFFF<<21, CAN_FILTERMODE_IDMASK,1);
-  SetFilterCAN(0x241<<21, 0xFE0<<21, CAN_FILTERMODE_IDMASK,2);
-#else
-
-  SetFilterCAN(0,0,CAN_FILTERMODE_IDMASK,0);
-#endif
   Change_CAN_channel();
   /* USER CODE END 2 */
 
@@ -427,58 +313,6 @@ int main(void)
 
 	  }
 
-	  if(conf.script_run == true)
-	  {
-		  if(conf.script_delay_active && HAL_GetTick() - conf.script_timestamp < conf.script_delay)
-		  {
-			  ;
-		  }
-		  else
-		  {
-			  uint8_t in_byte;
-			  conf.script_delay_active = false;
-			  EEPROM_Read(&hspi2, conf.script_address, &in_byte, 1);
-			  if(in_byte == CR)
-			  {
-				  exec_usb_cmd(script_buf);
-				  for(;script_buf_pointer > 0; script_buf_pointer--)
-				  {
-					  script_buf[script_buf_pointer] = 0;
-				  }
-				  script_buf_pointer = 0;
-				  if(conf.script_address < eeprom_settings.eeprom_size-1) conf.script_address++;
-				  else conf.script_run = false;
-			  }
-			  else if(in_byte == 0xFF)
-			  {
-				  script_buf_pointer = 0;
-				  if(conf.script_loop_address >= eeprom_settings.start_address_script && conf.script_loop_address != 0xFFFF)
-				  {
-					  conf.script_address = conf.script_loop_address;
-				  }
-				  else
-				  {
-					  conf.script_run = false;
-					  conf.script_address = eeprom_settings.start_address_script;
-					  script_buf_pointer = 0;
-				  }
-			  }
-			  else
-			  {
-				  script_buf[script_buf_pointer] = in_byte;
-				  script_buf_pointer++;
-				  if(conf.script_address < (eeprom_settings.eeprom_size-1) && script_buf_pointer < CMD_BUFFER_LENGTH) conf.script_address++;
-				  else conf.script_run = false;
-			  }
-		  }
-
-	  }
-	  else
-	  {
-		  conf.script_delay_active = false;
-	  }
-
-
 		if(HAL_GetTick() - time_stamp_UART >= 20 && uart_busy == 0)
 		{
 			time_stamp_UART = HAL_GetTick();
@@ -489,106 +323,10 @@ int main(void)
 		if(HAL_GetTick() - time_stamp_LED >= 500)
 		{
 			time_stamp_LED = HAL_GetTick();
-			HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 // LIN DEBUG
 //			uint8_t temp_buf[9] = {0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55,0x55};
 //			lin_send_master_request(0x55, temp_buf, 9);
 //			HAL_GPIO_WritePin(TX_LED_GPIO_Port, TX_LED_Pin, GPIO_PIN_SET);
-		}
-
-		//Save file, open NEW
-		if(conf.sd_card_avalible == true)
-		{
-			HAL_StatusTypeDef buff_stat;
-
-			buff_stat = CAN_Log_Buffer_pull();
-
-			if(HAL_GetTick() - time_stamp_SAVE >= LOG_FILE_SAVE_TIMEOUT
-					|| ((conf.state == IDLE_ST || conf.loger_run == false) && buff_stat == HAL_BUSY)
-					|| conf.fileOutputType != eeprom_settings.fileOutputType)
-			{
-				time_stamp_SAVE = HAL_GetTick();
-				if(f_size(&fil) != 0 || conf.fileOutputType != eeprom_settings.fileOutputType) // TODO save new format check
-				{
-					fresult = f_close(&fil);
-					if(conf.loger_run == true)
-					{
-						conf.fileOutputType = eeprom_settings.fileOutputType;
-						  do
-						  {
-							  Generate_Next_FileName(filename, pathname);
-							  fresult = f_open(&fil, (const TCHAR*)filename, FA_WRITE | FA_CREATE_NEW | FA_CREATE_ALWAYS);
-
-							  if(fresult == FR_DENIED) // Full_directory
-							  {
-						        	do
-						        	{
-						        		Generate_Next_Path(pathname);
-						        		fresult = f_mkdir((TCHAR*)pathname);
-						        	}
-						        	while(fresult == FR_EXIST);
-						        	if(fresult != FR_OK) return ERROR;
-						        	Generate_Next_FileName(filename, pathname);
-						        	fresult = f_open(&fil, (const TCHAR*)filename, FA_WRITE | FA_CREATE_NEW | FA_CREATE_ALWAYS);
-							  }
-						  }
-						  while(fresult == FR_EXIST);
-					}
-					if(fresult != FR_OK) conf.sd_card_avalible = false; //TODO flex. All errors disable card
-				}
-			}
-		}
-
-
-
-
-		if(Button_rutine(&button_var, HAL_GPIO_ReadPin(BUTTON_GPIO_Port, BUTTON_Pin) == 1) == DOUBLE_CLICKED)
-		{
-			Next_CAN_channel();
-		}
-
-		if(HAL_GPIO_ReadPin(RX_LED_GPIO_Port, RX_LED_Pin) == GPIO_PIN_SET)
-		{
-			if(rx_led_z1 == 0)
-			{
-				rx_led_z1 = 1;
-				rx_led_ts = HAL_GetTick();
-			}
-			else if(HAL_GetTick() - rx_led_ts > 3)
-			{
-				HAL_GPIO_WritePin(RX_LED_GPIO_Port, RX_LED_Pin, GPIO_PIN_RESET);
-				rx_led_z1 = 0;
-				rx_led_ts = HAL_GetTick();
-			}
-		}
-
-		if(HAL_GPIO_ReadPin(TX_LED_GPIO_Port, TX_LED_Pin) == GPIO_PIN_SET)
-		{
-			if(tx_led_z1 == 0)
-			{
-				tx_led_z1 = 1;
-				tx_led_ts = HAL_GetTick();
-			}
-			else if(HAL_GetTick() - tx_led_ts > 3)
-			{
-				HAL_GPIO_WritePin(TX_LED_GPIO_Port, TX_LED_Pin, GPIO_PIN_RESET);
-				tx_led_z1 = 0;
-			}
-		}
-
-		if(HAL_GPIO_ReadPin(ERROR_LED_GPIO_Port, ERROR_LED_Pin) == GPIO_PIN_SET)
-		{
-			if(HAL_CAN_GetError(&hcan) == HAL_CAN_ERROR_BOF) break;
-			if(error_led_z1 == 0)
-			{
-				error_led_z1 = 1;
-				error_led_ts = HAL_GetTick();
-			}
-			else if(HAL_GetTick() - error_led_ts > 100)
-			{
-				HAL_GPIO_WritePin(ERROR_LED_GPIO_Port, ERROR_LED_Pin, GPIO_PIN_RESET);
-				error_led_z1 = 0;
-			}
 		}
 
     /* USER CODE END WHILE */
